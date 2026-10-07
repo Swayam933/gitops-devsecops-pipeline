@@ -38,8 +38,6 @@ jobs:
   build:
     needs: lint
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -68,6 +66,9 @@ jobs:
   security-gate:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
