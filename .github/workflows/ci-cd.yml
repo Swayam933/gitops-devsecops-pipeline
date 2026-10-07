@@ -85,7 +85,7 @@ jobs:
 
       # --- HARD GATE #1: container vulnerability scan ---
       - name: Trivy vulnerability scan (blocking)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: table
@@ -95,7 +95,7 @@ jobs:
 
       - name: Trivy scan (full report, non-blocking, for visibility)
         if: always()
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: sarif
