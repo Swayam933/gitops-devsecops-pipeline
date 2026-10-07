@@ -7,12 +7,12 @@ on:
     branches: [main]
 
 env:
-  IMAGE_TAG: ${{ github.sha }}
   REGISTRY: ghcr.io
+  IMAGE_REPOSITORY: ${{ github.repository }}
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   lint:
-    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,19 +38,17 @@ jobs:
           python -m unittest discover -s tests
 
   build:
-    name: Build Container Image
     needs: lint
     runs-on: ubuntu-latest
-    outputs:
-      image-name: ${{ env.IMAGE_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set lowercase image name
-        run: echo "IMAGE_NAME=${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/gitops-devsecops-pipeline/devsecops-demo" >> "$GITHUB_ENV"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Normalize image name to lowercase
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/devsecops-demo' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Build image (not pushed yet — scan first)
         uses: docker/build-push-action@v6
@@ -62,36 +60,32 @@ jobs:
       - name: Save image as artifact for the scan job
         run: docker save ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o image.tar
 
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: image-tar
           path: image.tar
           retention-days: 1
 
   security-gate:
-    name: Security Scanning & Gating
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set lowercase image name
-        run: echo "IMAGE_NAME=${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/gitops-devsecops-pipeline/devsecops-demo" >> "$GITHUB_ENV"
-
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: image-tar
 
       - name: Load image
         run: docker load -i image.tar
 
+      - name: Normalize image name to lowercase
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/devsecops-demo' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      # --- HARD GATE #1: container vulnerability scan ---
       - name: Trivy vulnerability scan (blocking)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: table
@@ -101,29 +95,28 @@ jobs:
 
       - name: Trivy scan (full report, non-blocking, for visibility)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: sarif
           output: trivy-results.sarif
           exit-code: "0"
 
-      - name: Upload Trivy results to GitHub Security tab
+      - name: Upload scan results to GitHub Security tab
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-          category: trivy
 
+      # --- HARD GATE #2: static secret scan ---
       - name: Scan for committed secrets (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   push-image:
-    name: Publish Container Image
     needs: security-gate
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -131,18 +124,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set lowercase image name
-        run: echo "IMAGE_NAME=${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/gitops-devsecops-pipeline/devsecops-demo" >> "$GITHUB_ENV"
+      - name: Normalize image name to lowercase
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/devsecops-demo' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: image-tar
 
@@ -154,30 +147,28 @@ jobs:
           docker tag ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.IMAGE_NAME }}:latest
-          echo "Image pushed: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   update-manifest:
-    name: Update GitOps Manifests
     needs: push-image
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Set lowercase image name
-        run: echo "IMAGE_NAME=${{ env.REGISTRY }}/${GITHUB_REPOSITORY_OWNER,,}/gitops-devsecops-pipeline/devsecops-demo" >> "$GITHUB_ENV"
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@v3
 
-      - name: Validate manifest repo secret
+      - name: Check for MANIFEST_REPO_PAT
         id: check_pat
         run: |
           if [ -z "${{ secrets.MANIFEST_REPO_PAT }}" ]; then
-            echo "::warning::MANIFEST_REPO_PAT secret not set. Skipping manifest update."
+            echo "::warning::MANIFEST_REPO_PAT secret is not set. Skipping external manifest update."
             echo "has_pat=false" >> $GITHUB_OUTPUT
           else
             echo "has_pat=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Set up Kustomize
-        if: steps.check_pat.outputs.has_pat == 'true'
-        uses: imranismail/setup-kustomize@v3
+      - name: Normalize image name to lowercase
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_REPOSITORY }}/devsecops-demo' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Checkout manifests repository
         if: steps.check_pat.outputs.has_pat == 'true'
@@ -186,31 +177,19 @@ jobs:
           repository: ${{ github.repository_owner }}/gitops-devsecops-manifests
           token: ${{ secrets.MANIFEST_REPO_PAT }}
           path: manifests
-          fetch-depth: 0
 
-      - name: Update image tag via Kustomize
+      - name: Update image tag via Kustomize (GitOps write step)
         if: steps.check_pat.outputs.has_pat == 'true'
         run: |
           cd manifests/overlays/dev
-          kustomize edit set image devsecops-demo=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || {
-            echo "Kustomize edit failed. Attempting alternative syntax..."
-            kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          }
-          echo "✅ Image tag updated in dev overlay"
+          kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
       - name: Commit and push manifest update
         if: steps.check_pat.outputs.has_pat == 'true'
         run: |
           cd manifests
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
           git add .
-          
-          # Check if there are actual changes before committing
-          if git diff --cached --quiet; then
-            echo "ℹ️ No manifest changes detected. Skipping commit."
-          else
-            git commit -m "chore: update devsecops-demo image tag to ${{ env.IMAGE_TAG }}"
-            git push
-            echo "✅ Manifest repository updated successfully"
-          fi
+          git commit -m "deploy: dev -> ${{ env.IMAGE_TAG }}" || echo "no changes"
+          git push
