@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Blocks pods that reference an image with no tag or the :latest tag.
+      This is a real, common failure mode: :latest silently drifts between
+      deploys, breaking reproducibility and making rollbacks unreliable.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - local-path-storage
+      validate:
+        message: "An image tag is required (no :latest, no missing tag)."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

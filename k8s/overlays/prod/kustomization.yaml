@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prod
+resources:
+  - ../../base
+replicas:
+  - name: devsecops-demo
+    count: 3
+images:
+  - name: ghcr.io/OWNER/REPO/devsecops-demo
+    newTag: REPLACE_ME
+patches:
+  - target:
+      kind: Deployment
+      name: devsecops-demo
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devsecops-demo-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/OWNER/gitops-devsecops-manifests.git
+    targetRevision: main
+    path: overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: prod
+  syncPolicy:
+    # Deliberately NOT automated — prod promotion requires a human to click
+    # "Sync" in ArgoCD after reviewing the dev rollout. Auto-sync is fine for
+    # dev; prod gets a manual gate on top of the automated security gates.
+    syncOptions:
+      - CreateNamespace=true

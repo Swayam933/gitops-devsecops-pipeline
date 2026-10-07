@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devsecops-demo-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    # Points at the manifests repo the CI pipeline commits image-tag bumps to —
+    # NOT the app source repo. This is the actual GitOps split: CI never talks
+    # to the cluster; it only writes to Git, and ArgoCD reconciles from there.
+    repoURL: https://github.com/OWNER/gitops-devsecops-manifests.git
+    targetRevision: main
+    path: overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
